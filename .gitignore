@@ -1,0 +1,12 @@
+*.swp
+*.swo
+*.pyc
+*__pycache__
+*.egg-info
+*.DS_Store
+*.idea
+*.pkl
+*.pdf
+*.csv
+build/
+.vscode/
