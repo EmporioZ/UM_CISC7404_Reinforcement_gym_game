@@ -27,7 +27,7 @@ class Config:
     tau: float = 0.005
     alpha: float = 0.1
     auto_entropy_tuning: bool = True
-    target_entropy: float = -2.0  # -dim(A)
+    target_entropy: float = -np.log((1 / action_dim)) * 0.98  
 
     # 训练参数
     num_episodes: int = 10000
@@ -132,44 +132,6 @@ class ReplayBuffer(eqx.Module):
 
 
 
-
-
-
-# class ReplayBuffer:
-#     def __init__(self, buffer_size: int, obs_dim: int, action_dim: int):
-#         self.buffer_size = buffer_size
-#         self.obs_dim = obs_dim
-#         self.action_dim = action_dim
-#         self.ptr = 0
-#         self.size = 0
-#
-#         self.obs = np.zeros((buffer_size, obs_dim), dtype=np.float32)
-#         self.actions = np.zeros((buffer_size, 1), dtype=np.int32)  # Changed to int32 for discrete actions
-#         self.rewards = np.zeros((buffer_size, 1), dtype=np.float32)
-#         self.next_obs = np.zeros((buffer_size, obs_dim), dtype=np.float32)
-#         self.dones = np.zeros((buffer_size, 1), dtype=np.float32)
-#
-#     def add(self, obs, action, reward, next_obs, done):
-#         self.obs[self.ptr] = obs
-#         self.actions[self.ptr] = action
-#         self.rewards[self.ptr] = reward
-#         self.next_obs[self.ptr] = next_obs
-#         self.dones[self.ptr] = done
-#
-#         self.ptr = (self.ptr + 1) % self.buffer_size
-#         self.size = min(self.size + 1, self.buffer_size)
-#
-#     def sample(self, batch_size: int):
-#         indices = np.random.randint(0, self.size, size=batch_size)
-#         return (
-#             self.obs[indices],
-#             self.actions[indices],
-#             self.rewards[indices],
-#             self.next_obs[indices],
-#             self.dones[indices]
-#         )
-
-
 class Actor(eqx.Module):
     # hidden: eqx.nn.MLP
     # logits: eqx.nn.Linear
@@ -189,8 +151,14 @@ class Actor(eqx.Module):
     def __call__(self, x, key=None):
         # Handle both single and batch inputs
         logits = self.trunk(x)
-        dist = distributions.Categorical(logits=logits)
-        return dist
+        action_prob = jax.nn.softmax(logits, axis=-1)
+        max_logits_action = jnp.argmax(action_prob, axis=-1)
+        action_dist = distributions.Categorical(logits=logits)
+        action = action_dist.sample(key=key)
+        z = logits == 0.0
+        z = jnp.float32(z) * 1e-8
+        log_action_prob = jnp.log(action_prob + z)
+        return action, (action_prob, log_action_prob), max_logits_action
 
 
 class DoubleCritic(eqx.Module):
@@ -203,28 +171,24 @@ class DoubleCritic(eqx.Module):
         self.action_dim = action_dim
 
         self.q1 = eqx.nn.MLP(
-            in_size=obs_dim + action_dim,
-            out_size=1,
+            in_size=obs_dim,
+            out_size=action_dim,
             width_size=hidden_dim,
             depth=2,
             key=keys[0]
         )
         self.q2 = eqx.nn.MLP(
-            in_size=obs_dim + action_dim,
-            out_size=1,
+            in_size=obs_dim,
+            out_size=action_dim,
             width_size=hidden_dim,
             depth=2,
             key=keys[1]
         )
 
-    def __call__(self, obs, action):
+    def __call__(self, obs):
         # Handle both single and batch inputs
-        action = jax.nn.one_hot(action, self.action_dim)
-        if action.ndim == 2:
-            action = action.squeeze(0)
-        input = jnp.concatenate([obs, action])
-        q1 = self.q1(input).squeeze(-1)
-        q2 = self.q2(input).squeeze(-1)
+        q1 = self.q1(obs)
+        q2 = self.q2(obs)
         return q1, q2
 
 
@@ -278,20 +242,19 @@ def _update_critic(train_state, batch, key):
     obs, actions, rewards, next_obs, dones = batch
     key_array = jax.random.split(key, obs.shape[0])
     # 计算目标Q值
-    next_actions_dist = eqx.filter_vmap(train_state.actor)(next_obs)
-    next_actions = next_actions_dist.sample(key=key)
-    log_prob = next_actions_dist.log_prob(next_actions).sum(-1)
-    target_q1, target_q2 = eqx.filter_vmap(train_state.target_critic)(next_obs, next_actions)
-    target_V = jnp.minimum(target_q1, target_q2) - train_state.alpha() * log_prob
-    target_Q = rewards + (1 - dones) * config.gamma * target_V
+    next_actions, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(train_state.actor)(next_obs)
+    next_target_q1, next_target_q2 = eqx.filter_vmap(train_state.target_critic)(next_obs, next_actions)
+    min_next_target_q = action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob)
+    min_next_target_q = jnp.sum(min_next_target_q, axis=-1)
+    next_Q = rewards + (1 - dones) * config.gamma * min_next_target_q
 
     # 更新critic
     def critic_loss(model, target, obs, actions):
         q1, q2 = eqx.filter_vmap(model)(obs, actions)
-        loss = jnp.mean((q1 - target_Q) ** 2) + jnp.mean((q2 - target_Q) ** 2)
+        loss = jnp.mean((q1 - next_Q) ** 2) + jnp.mean((q2 - next_Q) ** 2)
         return loss
 
-    grads = eqx.filter_grad(critic_loss)(train_state.critic, target_Q, obs, actions)
+    grads = eqx.filter_grad(critic_loss)(train_state.critic)
     updates, new_critic_opt_state = train_state.critic_opt.update(grads, train_state.critic_opt_state,
                                                                   eqx.filter(train_state.critic, eqx.is_array))
 
@@ -307,14 +270,12 @@ def _update_actor(train_state, batch, key):
     key_array = jax.random.split(key, obs.shape[0])
 
     def actor_loss(actor):
-        dist = eqx.filter_vmap(actor)(obs, key_array)
-        new_actions = dist.sample(key=key)
-        q1, q2 = eqx.filter_vmap(train_state.critic)(obs, new_actions)
+        next_action, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(actor)(obs, key_array)
+        q1, q2 = eqx.filter_vmap(train_state.critic)(obs)
         q = jnp.minimum(q1, q2)
-
-        log_prob = dist.log_prob(new_actions)
-
-        loss = jnp.mean(train_state.alpha() * log_prob.sum(-1) - q)
+        inside_term = train_state.alpha() * log_action_prob - q
+        loss = (action_prob * inside_term).sum(1).mean()
+        # loss = jnp.mean(inside_term)
         return loss
 
     grads = eqx.filter_grad(actor_loss)(train_state.actor)
@@ -333,11 +294,8 @@ def _update_alpha(train_state, batch, key):
     key_array = jax.random.split(key, obs.shape[0])
 
     def alpha_loss(log_alpha):
-        dist = eqx.filter_vmap(train_state.actor)(obs, key_array)
-        new_actions = dist.sample(key=key)
-        log_prob = dist.log_prob(new_actions)
-
-        loss = jnp.mean(log_alpha() * (-log_prob - config.target_entropy))
+        next_action, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(train_state.actor)(obs, key_array)
+        loss = jnp.mean(log_alpha() * (-log_action_prob - config.target_entropy))
         return loss
 
     grads = jax.grad(alpha_loss)(train_state.alpha)
