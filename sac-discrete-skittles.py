@@ -288,6 +288,29 @@ def train(train_state, config, env, env_params, buffer):
               f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
 
 
+def evaluate(model, config):
+    seed = jax.random.PRNGKey(10)
+    seed, _rng = jax.random.split(seed)
+    env = SkittlesEasy()
+    env_params = env.default_params
+
+    obs, state = env.reset(_rng, env_params)
+
+    wandb.init(project="sac")
+    frames = []
+    for i in range(500):
+        rng, rng_act, rng_step, _rng = jax.random.split(_rng, 4)
+        action = int(model(obs))
+        obs, new_state, reward, term, _ = env.step(rng_step, state, action, env_params)
+        state = new_state
+        frame = np.asarray(obs)
+        frame = (frame * 255).astype(np.uint8)
+        frames.append(frame)
+    frames = np.array(frames, dtype=np.uint8)
+    # frames = frames.transpose((0, 3, 1, 2))
+    wandb.log({"SAC_{}_{}".format(config.env_name, config.seed): wandb.Video(frames, fps=4)})
+
+
 if __name__ == "__main__":
 
     config = Config()
@@ -326,3 +349,4 @@ if __name__ == "__main__":
     # env = SkittlesMedium()
     buffer = ReplayBuffer(config.buffer_size, config.obs_dim, config.action_dim, key=key)
     train(train_state, config, env, env.default_params, buffer)
+    evaluate(train_state.actor, config)
