@@ -10,3 +10,7 @@
 *.csv
 build/
 .vscode/
+wandb/
+*.png
+*.jpg
+*.jpeg
