@@ -265,7 +265,15 @@ class Skittles(environment.Environment[EnvState, EnvParams]):
 
     def get_obs(self, state: EnvState, params=None, key=None) -> chex.Array:
 
-        obs = state.matrix_state
+        empty = jnp.zeros((self.grid_size, self.grid_size), dtype=jnp.int32)
+        empty = empty.at[0, :].set(state.matrix_state[0, :])
+        # jax.debug.print("empty:{}", empty)
+        obs = lax.select(
+            self.partial_obs,
+            empty,
+            state.matrix_state,
+        )
+
         obs = obs.at[self.grid_size - 1, state.x].set(2)
         return obs
         # return self.render(state)

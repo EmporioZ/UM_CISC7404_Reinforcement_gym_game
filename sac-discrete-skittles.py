@@ -24,7 +24,7 @@ class Config:
     alpha: float = 0.1
     auto_entropy_tuning: bool = True
     target_entropy: float = -np.log((1 / action_dim)) * 0.98
-    num_episodes: int = 10000
+    num_episodes: int = 1200
     eval_interval: int = 10
     warmup_steps: int = 1000
 
@@ -287,8 +287,6 @@ def train(train_state, config, env, env_params, buffer):
               f"Avg Actor Loss: {avg_actor_loss:.4f}, "
               f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
 
-def evaluate(mode, env):
-    key = jax.random.split(key, 3)
 
 if __name__ == "__main__":
 
