@@ -1,10 +1,11 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+import popgym_arcade
+from equinox import nn
 import optax
 import gymnax
 from distreqx import distributions
-# from gymnax.environments import cartpole
 from typing import Tuple, NamedTuple
 import numpy as np
 from dataclasses import dataclass
@@ -13,16 +14,15 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     # 环境参数
-    env_name: str = "CartPole-v1"
+    env_name: str = "CartPoleHard"
     seed: int = 42
-    obs_dim: int = 4  # CartPole observation dimension
-    action_dim: int = 2  # CartPole action dimension (0 or 1)
+    obs_dim: int = (128, 128, 3)  # CartPole observation dimension
+    action_dim: int = 5  # CartPole action dimension (0 or 1)
 
     # SAC超参数
-    hidden_dim: int = 256
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-4
     buffer_size: int = 10000
-    batch_size: int = 64
+    batch_size: int = 512
     gamma: float = 0.99
     tau: float = 0.005
     alpha: float = 0.1
@@ -51,7 +51,7 @@ class Transition(NamedTuple):
 
 class ReplayBuffer(eqx.Module):
     buffer_size: int
-    obs_dim: int
+    obs_dim: Tuple
     action_dim: int
     ptr: jnp.ndarray
     size: jnp.ndarray
@@ -62,7 +62,7 @@ class ReplayBuffer(eqx.Module):
     next_obs: jnp.ndarray
     dones: jnp.ndarray
 
-    def __init__(self, buffer_size: int, obs_dim: int, action_dim: int, key: jax.random.PRNGKey):
+    def __init__(self, buffer_size: int, obs_dim: Tuple, action_dim: int, key: jax.random.PRNGKey):
         self.buffer_size = buffer_size
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -72,10 +72,10 @@ class ReplayBuffer(eqx.Module):
         self.size = jnp.array(0, dtype=jnp.int32)
 
         # Initialize storage with JAX arrays
-        self.obs = jnp.zeros((buffer_size, obs_dim), dtype=jnp.float32)
+        self.obs = jnp.zeros((buffer_size, obs_dim[0], obs_dim[1], obs_dim[2]), dtype=jnp.float32)
         self.actions = jnp.zeros((buffer_size, 1), dtype=jnp.int32)
         self.rewards = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
-        self.next_obs = jnp.zeros((buffer_size, obs_dim), dtype=jnp.float32)
+        self.next_obs = jnp.zeros((buffer_size, obs_dim[0], obs_dim[1], obs_dim[2]), dtype=jnp.float32)
         self.dones = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
 
     def add(self, obs, action, reward, next_obs, done):
@@ -134,21 +134,46 @@ class ReplayBuffer(eqx.Module):
 class Actor(eqx.Module):
     # hidden: eqx.nn.MLP
     # logits: eqx.nn.Linear
-    trunk: eqx.nn.Sequential
+    action_dim: int
+    cnn: nn.Sequential
+    trunk: nn.Sequential
 
-    def __init__(self, obs_dim: int, action_dim: int, hidden_dim: int, key):
-        keys = jax.random.split(key, 2)
-
-        self.trunk = eqx.nn.Sequential(
+    def __init__(self, action_dim: int, key):
+        key_array = jax.random.split(key, 14)
+        self.action_dim = action_dim
+        self.cnn = nn.Sequential(
             [
-                eqx.nn.MLP(in_size=obs_dim, out_size=hidden_dim, width_size=hidden_dim, depth=2, key=keys[0]),
-                eqx.nn.Lambda(jax.nn.relu),
-                eqx.nn.Linear(hidden_dim, action_dim, key=keys[1])
+                nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5, stride=2, key=key_array[0]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, key=key_array[1]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, key=key_array[2]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=3, stride=1),
+                nn.Conv2d(in_channels=256, out_channels=512, kernel_size=1, stride=1, key=key_array[3]),
+                nn.Lambda(jax.nn.leaky_relu),
+            ]
+        )
+
+        self.trunk = nn.Sequential(
+            [
+                nn.Linear(in_features=512, out_features=256, key=key_array[4]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=256, key=key_array[5]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=self.action_dim, key=key_array[6])
             ]
         )
 
     def __call__(self, x, key=None):
-        # Handle both single and batch inputs
+        # Handle both single and batch input
+        x = jnp.transpose(x, (2, 0, 1))
+        x = self.cnn(x)
+        x = jnp.reshape(x, -1)
         logits = self.trunk(x)
         action_prob = jax.nn.softmax(logits, axis=-1)
         max_logits_action = jnp.argmax(action_prob, axis=-1)
@@ -161,33 +186,94 @@ class Actor(eqx.Module):
 
 
 class DoubleCritic(eqx.Module):
-    q1: eqx.nn.MLP
-    q2: eqx.nn.MLP
+    cnn_1: nn.Sequential
+    cnn_2: nn.Sequential
+    trunk_1: nn.Sequential
+    trunk_2: nn.Sequential
+
     action_dim: int
 
-    def __init__(self, obs_dim: int, action_dim: int, hidden_dim: int, key):
-        keys = jax.random.split(key, 2)
+    def __init__(self, action_dim: int, key):
+        key_array = jax.random.split(key, 14)
         self.action_dim = action_dim
 
-        self.q1 = eqx.nn.MLP(
-            in_size=obs_dim,
-            out_size=action_dim,
-            width_size=hidden_dim,
-            depth=2,
-            key=keys[0]
+        self.cnn_1 = nn.Sequential(
+            [
+                nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5, stride=2, key=key_array[0]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, key=key_array[1]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, key=key_array[2]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=3, stride=1),
+                nn.Conv2d(in_channels=256, out_channels=512, kernel_size=1, stride=1, key=key_array[3]),
+                nn.Lambda(jax.nn.leaky_relu),
+            ]
         )
-        self.q2 = eqx.nn.MLP(
-            in_size=obs_dim,
-            out_size=action_dim,
-            width_size=hidden_dim,
-            depth=2,
-            key=keys[1]
+        self.cnn_2 = nn.Sequential(
+            [
+                nn.Conv2d(in_channels=3, out_channels=64, kernel_size=5, stride=2, key=key_array[4]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, key=key_array[5]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, key=key_array[6]),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.MaxPool2d(kernel_size=3, stride=1),
+                nn.Conv2d(in_channels=256, out_channels=512, kernel_size=1, stride=1, key=key_array[7]),
+                nn.Lambda(jax.nn.leaky_relu),
+            ]
         )
+        self.trunk_1 = nn.Sequential(
+            [
+                nn.Linear(in_features=512, out_features=256, key=key_array[8]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=256, key=key_array[9]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=self.action_dim, key=key_array[10])
+            ]
+        )
+        self.trunk_2 = nn.Sequential(
+            [
+                nn.Linear(in_features=512, out_features=256, key=key_array[11]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=256, key=key_array[12]),
+                nn.LayerNorm(shape=256),
+                nn.Lambda(jax.nn.leaky_relu),
+                nn.Linear(in_features=256, out_features=self.action_dim, key=key_array[13])
+            ]
+        )
+
+        # self.q1 = eqx.nn.MLP(
+        #     in_size=obs_dim,
+        #     out_size=action_dim,
+        #     width_size=hidden_dim,
+        #     depth=2,
+        #     key=keys[0]
+        # )
+        # self.q2 = eqx.nn.MLP(
+        #     in_size=obs_dim,
+        #     out_size=action_dim,
+        #     width_size=hidden_dim,
+        #     depth=2,
+        #     key=keys[1]
+        # )
 
     def __call__(self, obs):
         # Handle both single and batch inputs
-        q1 = self.q1(obs)
-        q2 = self.q2(obs)
+        obs = jnp.transpose(obs, (2, 0, 1))
+        feature1 = self.cnn_1(obs)
+        feature2 = self.cnn_2(obs)
+        feature1 = jnp.reshape(feature1, -1)
+        feature2 = jnp.reshape(feature2, -1)
+        q1 = self.trunk_1(feature1)
+        q2 = self.trunk_2(feature2)
         return q1, q2
 
 
@@ -246,16 +332,19 @@ def _update_critic(train_state, batch, key):
     # next_target_q = jnp.sum(action_prob * (min_next_target_q - train_state.alpha() * log_action_prob), axis=-1)
     # next_target_q = jnp.expand_dims(next_target_q, -1)
     # target_q = rewards + (1 - dones) * config.gamma * next_target_q
-    min_next_target_q = action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob)
-    min_next_target_q = jnp.expand_dims(jnp.sum(min_next_target_q, axis=-1), axis=-1)
+    min_next_target_q = jnp.sum(action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob) ,axis=-1, keepdims=True)
 
     target_q = rewards + (1 - dones) * config.gamma * min_next_target_q
+    # jax.debug.print("target_q:{}", target_q.shape)
     # print(next_Q.shape)
 
     # 更新critic
     def critic_loss(model):
         q1, q2 = eqx.filter_vmap(model)(obs)
-        loss = jnp.mean((q1 - target_q) ** 2) + jnp.mean((q2 - target_q) ** 2)
+        actions_int = actions.squeeze().astype(jnp.int32)
+        q1_a = q1[jnp.arange(obs.shape[0]), actions_int]
+        q2_a = q2[jnp.arange(obs.shape[0]), actions_int]
+        loss = jnp.mean((q1_a - target_q.squeeze()) ** 2) + jnp.mean((q2_a - target_q.squeeze()) ** 2)
         return loss
 
     loss, grads = eqx.filter_value_and_grad(critic_loss)(train_state.critic)
@@ -277,8 +366,8 @@ def _update_actor(train_state, batch, key):
         next_action, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(actor)(obs, key_array)
         q1, q2 = eqx.filter_vmap(train_state.critic)(obs)
         q = jnp.minimum(q1, q2)
-        inside_term = train_state.alpha() * log_action_prob - q
-        loss = (action_prob * inside_term).sum(axis=1).mean()
+        inside_term = q - train_state.alpha() * log_action_prob
+        loss = -(action_prob * inside_term).sum(axis=-1).mean()
         return loss
 
     loss, grads = eqx.filter_value_and_grad(actor_loss)(train_state.actor)
@@ -298,9 +387,10 @@ def _update_alpha(train_state, batch, key):
 
     def alpha_loss(log_alpha):
         next_action, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(train_state.actor)(obs, key_array)
-        # alpha = jnp.exp(log_alpha())
-        # loss = jnp.mean(-alpha * (log_action_prob + config.target_entropy))
-        loss = jnp.mean(action_prob * ((log_alpha() * -log_action_prob) + config.target_entropy))
+        entropy = -jnp.sum(action_prob * log_action_prob, axis=-1)
+        alpha = log_alpha()
+        loss = jnp.mean(-alpha * (entropy + config.target_entropy))
+        # loss = jnp.mean(action_prob * ((log_alpha() * -log_action_prob) + config.target_entropy))
         return loss
 
     loss, grads = eqx.filter_value_and_grad(alpha_loss)(train_state.alpha)
@@ -373,23 +463,22 @@ def train(train_state, config, env, env_params, buffer):
             episode_reward += reward
             key, _ = jax.random.split(key)
 
-        if episode % config.eval_interval == 0:
-            avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
-            avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
-            avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
-            print(f"Episode {episode}, Reward: {episode_reward}, "
-                  f"Avg Critic Loss: {avg_critic_loss:.4f}, "
-                  f"Avg Actor Loss: {avg_actor_loss:.4f}, "
-                  f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
+        avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
+        avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
+        avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
+        print(f"Episode {episode}, Reward: {episode_reward}, "
+              f"Avg Critic Loss: {avg_critic_loss:.4f}, "
+              f"Avg Actor Loss: {avg_actor_loss:.4f}, "
+              f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
 
 
 if __name__ == "__main__":
     config = Config()
     key = jax.random.PRNGKey(config.seed)
-    actor = Actor(config.obs_dim, config.action_dim, config.hidden_dim, key)
-    critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
+    actor = Actor(config.action_dim, key)
+    critic = DoubleCritic(config.action_dim, key)
     alpha = Alpha()
-    target_critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
+    target_critic = DoubleCritic(config.action_dim, key)
     actor_opt = optax.adam(config.learning_rate)
     actor_opt_state = actor_opt.init(eqx.filter(actor, eqx.is_array))
     critic_opt = optax.adam(config.learning_rate)
@@ -410,6 +499,6 @@ if __name__ == "__main__":
         alpha_opt_state=alpha_opt_state,
     )
 
-    env, env_params = gymnax.make(config.env_name)
+    env, env_params = popgym_arcade.make(config.env_name, obs_size=128)
     buffer = ReplayBuffer(config.buffer_size, config.obs_dim, config.action_dim, key=key)
     train(train_state, config, env, env_params, buffer)

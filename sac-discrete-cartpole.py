@@ -168,6 +168,7 @@ def _update_critic(train_state, batch, key):
     next_target_q1, next_target_q2 = eqx.filter_vmap(train_state.target_critic)(next_obs)
     min_next_target_q = jnp.sum(action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob), axis=-1, keepdims=True)
     target_q = rewards + (1 - dones) * config.gamma * min_next_target_q
+    # jax.debug.print("target_q:{}", target_q.shape)
 
     def critic_loss(model):
         q1, q2 = eqx.filter_vmap(model)(obs)
@@ -270,14 +271,13 @@ def train(train_state, config, env, env_params, buffer):
             episode_reward += reward
             key, _ = jax.random.split(key)
 
-        if episode % config.eval_interval == 0:
-            avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
-            avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
-            avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
-            print(f"Episode {episode}, Reward: {episode_reward}, "
-                  f"Avg Critic Loss: {avg_critic_loss:.4f}, "
-                  f"Avg Actor Loss: {avg_actor_loss:.4f}, "
-                  f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
+        avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
+        avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
+        avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
+        print(f"Episode {episode}, Reward: {episode_reward}, "
+              f"Avg Critic Loss: {avg_critic_loss:.4f}, "
+              f"Avg Actor Loss: {avg_actor_loss:.4f}, "
+              f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
 
 if __name__ == "__main__":
     config = Config()
