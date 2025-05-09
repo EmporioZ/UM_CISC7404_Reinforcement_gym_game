@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+import matplotlib.pyplot as plt
 import optax
 from skittles import SkittlesEasy, SkittlesMedium, SkittlesHard
 from distreqx import distributions
@@ -16,17 +17,17 @@ class Config:
     obs_dim: int = 64
     action_dim: int = 5
     hidden_dim: int = 256
-    learning_rate: float = 3e-4
-    buffer_size: int = 10000
-    batch_size: int = 64
+    learning_rate: float = 1e-5
+    buffer_size: int = 100000
+    batch_size: int = 512
     gamma: float = 0.99
-    tau: float = 0.005
+    tau: float = 0.001
     alpha: float = 0.1
     auto_entropy_tuning: bool = True
     target_entropy: float = -np.log((1 / action_dim)) * 0.98
-    num_episodes: int = 1200
+    num_episodes: int = 5000
     eval_interval: int = 10
-    warmup_steps: int = 1000
+    warmup_steps: int = 5000
 
 class Transition(NamedTuple):
     obs: jnp.ndarray
@@ -53,10 +54,10 @@ class ReplayBuffer(eqx.Module):
         self.action_dim = action_dim
         self.ptr = jnp.array(0, dtype=jnp.int32)
         self.size = jnp.array(0, dtype=jnp.int32)
-        self.obs = jnp.zeros((buffer_size, obs_dim // 8, obs_dim // 8), dtype=jnp.float32)
+        self.obs = jnp.zeros((buffer_size, 8, 8), dtype=jnp.float32)
         self.actions = jnp.zeros((buffer_size, 1), dtype=jnp.int32)
         self.rewards = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
-        self.next_obs = jnp.zeros((buffer_size, obs_dim // 8, obs_dim // 8), dtype=jnp.float32)
+        self.next_obs = jnp.zeros((buffer_size, 8, 8), dtype=jnp.float32)
         self.dones = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
 
     def add(self, obs, action, reward, next_obs, done):
@@ -214,7 +215,7 @@ def _update_alpha(train_state, batch, key):
     def alpha_loss(log_alpha):
         _, (action_prob, log_action_prob), _ = eqx.filter_vmap(train_state.actor)(obs, key_array)
         entropy = -jnp.sum(action_prob * log_action_prob, axis=-1)
-        alpha = jnp.exp(log_alpha())
+        alpha = log_alpha()
         loss = jnp.mean(-alpha * (entropy + config.target_entropy))
         return loss
 
@@ -295,19 +296,26 @@ def evaluate(model, config):
     env_params = env.default_params
 
     obs, state = env.reset(_rng, env_params)
+    frames = []
+
+    pixel_obs = env.render(state)
+    frame = np.asarray(pixel_obs)
+    frame = (frame * 255).astype(np.uint8)
+    frames.append(frame)
 
     wandb.init(project="sac")
-    frames = []
-    for i in range(500):
+    for i in range(200):
         rng, rng_act, rng_step, _rng = jax.random.split(_rng, 4)
-        action = int(model(obs))
+        action = int(model(obs, rng_act)[0])
         obs, new_state, reward, term, _ = env.step(rng_step, state, action, env_params)
+        new_pixel_obs = env.render(new_state)
+
         state = new_state
-        frame = np.asarray(obs)
+        frame = np.asarray(new_pixel_obs)
         frame = (frame * 255).astype(np.uint8)
         frames.append(frame)
     frames = np.array(frames, dtype=np.uint8)
-    # frames = frames.transpose((0, 3, 1, 2))
+    frames = frames.transpose((0, 3, 1, 2))
     wandb.log({"SAC_{}_{}".format(config.env_name, config.seed): wandb.Video(frames, fps=4)})
 
 
@@ -320,17 +328,19 @@ if __name__ == "__main__":
         name=f'sac_for_{config.seed}',
         mode="online",
     )
+
     key = jax.random.PRNGKey(config.seed)
     actor = Actor(config.obs_dim, config.action_dim, config.hidden_dim, key)
     critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
     alpha = Alpha()
     target_critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
-    actor_opt = optax.adam(config.learning_rate)
+    actor_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
+    critic_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
+    alpha_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
     actor_opt_state = actor_opt.init(eqx.filter(actor, eqx.is_array))
-    critic_opt = optax.adam(config.learning_rate)
     critic_opt_state = critic_opt.init(eqx.filter(critic, eqx.is_array))
-    alpha_opt = optax.adam(config.learning_rate)
     alpha_opt_state = alpha_opt.init(eqx.filter(alpha, eqx.is_array))
+
 
     train_state = TrainState(
         actor=actor,

@@ -429,11 +429,6 @@ def train(train_state, config, env, env_params, buffer):
                 train_state, actor_loss = _update_actor(train_state, batch, keys[1])
                 train_state, alpha_loss = _update_alpha(train_state, batch, keys[2])
 
-                # new_target_critic = optax.incremental_update(
-                #     train_state.critic,
-                #     train_state.target_critic,
-                #     config.tau
-                # )
 
                 critic_params, critic_arch = eqx.partition(train_state.critic, eqx.is_array)
                 target_critic_params, target_critic_arch = eqx.partition(train_state.target_critic, eqx.is_array)
