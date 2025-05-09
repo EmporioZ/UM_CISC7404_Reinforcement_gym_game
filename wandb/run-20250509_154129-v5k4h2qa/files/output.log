@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/sac-arcade.py", line 505, in <module>
+    env, env_params = popgym_arcade.make(config["env_name"], obs_size=128)
+  File "/home/gpuadmin/popgym_arcade/popgym_arcade/registration.py", line 78, in make
+    raise ValueError("Environment ID is not registered")
+ValueError: Environment ID is not registered

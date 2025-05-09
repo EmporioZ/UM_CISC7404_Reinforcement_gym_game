@@ -4,36 +4,41 @@ import equinox as eqx
 import popgym_arcade
 from equinox import nn
 import optax
-import gymnax
+import wandb
 from distreqx import distributions
 from typing import Tuple, NamedTuple
 import numpy as np
-from dataclasses import dataclass
+from optax import linear_schedule
 
-
-@dataclass
-class Config:
+# 将Config类改为字典形式
+config = {
     # 环境参数
-    env_name: str = "CartPoleHard"
-    seed: int = 42
-    obs_dim: int = (128, 128, 3)  # CartPole observation dimension
-    action_dim: int = 5  # CartPole action dimension (0 or 1)
+    "wandb_mode": "online",
+    "entity": "",
+    "project": "sac",
+    "alg_name": "soft actor-critic",
+    "env_name": "SkittlesEasy",
+    "seed": 42,
+    "obs_dim": (128, 128, 3),  # CartPole observation dimension
+    "action_dim": 5,  # CartPole action dimension (0 or 1)
 
     # SAC超参数
-    learning_rate: float = 1e-4
-    buffer_size: int = 10000
-    batch_size: int = 512
-    gamma: float = 0.99
-    tau: float = 0.005
-    alpha: float = 0.1
-    auto_entropy_tuning: bool = True
-    target_entropy: float = -np.log((1 / action_dim)) * 0.98  
+    "learning_rate": 1e-4,
+    "clip_eps": 0.2,
+    "buffer_size": 10000,
+    "batch_size": 64,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "alpha": 0.1,
+    "auto_entropy_tuning": True,
+    "target_entropy": -np.log((1 / 5)) * 0.98,  # 注意这里直接使用了action_dim的值5
+
 
     # 训练参数
-    num_episodes: int = 10000
-    eval_interval: int = 10
-    warmup_steps: int = 1000
-
+    "num_episodes": 1000,
+    "eval_interval": 10,
+    "warmup_steps": 1000
+}
 
 class Transition(NamedTuple):
     obs: jnp.ndarray
@@ -41,7 +46,6 @@ class Transition(NamedTuple):
     reward: jnp.ndarray
     next_obs: jnp.ndarray
     done: jnp.ndarray
-
 
 class ReplayBuffer(eqx.Module):
     buffer_size: int
@@ -123,11 +127,7 @@ class ReplayBuffer(eqx.Module):
     def is_full(self):
         return self.size == self.buffer_size
 
-
-
 class Actor(eqx.Module):
-    # hidden: eqx.nn.MLP
-    # logits: eqx.nn.Linear
     action_dim: int
     cnn: nn.Sequential
     trunk: nn.Sequential
@@ -164,7 +164,6 @@ class Actor(eqx.Module):
         )
 
     def __call__(self, x, key=None):
-        # Handle both single and batch input
         x = jnp.transpose(x, (2, 0, 1))
         x = self.cnn(x)
         x = jnp.reshape(x, -1)
@@ -178,13 +177,11 @@ class Actor(eqx.Module):
         log_action_prob = jnp.log(action_prob + z)
         return action, (action_prob, log_action_prob), max_logits_action
 
-
 class DoubleCritic(eqx.Module):
     cnn_1: nn.Sequential
     cnn_2: nn.Sequential
     trunk_1: nn.Sequential
     trunk_2: nn.Sequential
-
     action_dim: int
 
     def __init__(self, action_dim: int, key):
@@ -244,23 +241,7 @@ class DoubleCritic(eqx.Module):
             ]
         )
 
-        # self.q1 = eqx.nn.MLP(
-        #     in_size=obs_dim,
-        #     out_size=action_dim,
-        #     width_size=hidden_dim,
-        #     depth=2,
-        #     key=keys[0]
-        # )
-        # self.q2 = eqx.nn.MLP(
-        #     in_size=obs_dim,
-        #     out_size=action_dim,
-        #     width_size=hidden_dim,
-        #     depth=2,
-        #     key=keys[1]
-        # )
-
     def __call__(self, obs):
-        # Handle both single and batch inputs
         obs = jnp.transpose(obs, (2, 0, 1))
         feature1 = self.cnn_1(obs)
         feature2 = self.cnn_2(obs)
@@ -269,7 +250,6 @@ class DoubleCritic(eqx.Module):
         q1 = self.trunk_1(feature1)
         q2 = self.trunk_2(feature2)
         return q1, q2
-
 
 class Alpha(eqx.Module):
     value: jax.Array
@@ -280,18 +260,11 @@ class Alpha(eqx.Module):
     def __call__(self):
         return jnp.exp(self.value)
 
-
 class State(eqx.Module):
     """Base class"""
 
     def replace(self, **kwargs):
-        """Replaces existing fields.
-
-        E.g., s = State(bork=1, dork=2)
-        s.replace(dork=3)
-        print(s)
-            >> State(bork=1, dork=3)
-        """
+        """Replaces existing fields."""
         fields = self.__dataclass_fields__
         assert set(kwargs.keys()).issubset(fields)
         new_pytree = {}
@@ -301,7 +274,6 @@ class State(eqx.Module):
             else:
                 new_pytree[k] = getattr(self, k)
         return type(self)(**new_pytree)
-
 
 class TrainState(State):
     actor: Actor
@@ -319,20 +291,11 @@ class TrainState(State):
 def _update_critic(train_state, batch, key):
     obs, actions, rewards, next_obs, dones = batch
     key_array = jax.random.split(key, obs.shape[0])
-    # 计算目标Q值
     next_actions, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(train_state.actor)(next_obs, key_array)
     next_target_q1, next_target_q2 = eqx.filter_vmap(train_state.target_critic)(next_obs)
-    # min_next_target_q = jnp.minimum(next_target_q1, next_target_q2)
-    # next_target_q = jnp.sum(action_prob * (min_next_target_q - train_state.alpha() * log_action_prob), axis=-1)
-    # next_target_q = jnp.expand_dims(next_target_q, -1)
-    # target_q = rewards + (1 - dones) * config.gamma * next_target_q
-    min_next_target_q = jnp.sum(action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob) ,axis=-1, keepdims=True)
+    min_next_target_q = jnp.sum(action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob), axis=-1, keepdims=True)
+    target_q = rewards + (1 - dones) * config["gamma"] * min_next_target_q
 
-    target_q = rewards + (1 - dones) * config.gamma * min_next_target_q
-    # jax.debug.print("target_q:{}", target_q.shape)
-    # print(next_Q.shape)
-
-    # 更新critic
     def critic_loss(model):
         q1, q2 = eqx.filter_vmap(model)(obs)
         actions_int = actions.squeeze().astype(jnp.int32)
@@ -343,13 +306,10 @@ def _update_critic(train_state, batch, key):
 
     loss, grads = eqx.filter_value_and_grad(critic_loss)(train_state.critic)
     updates, new_critic_opt_state = train_state.critic_opt.update(grads, train_state.critic_opt_state,
-                                                                  eqx.filter(train_state.critic, eqx.is_array))
-
+                                                              eqx.filter(train_state.critic, eqx.is_array))
     new_critic = eqx.apply_updates(train_state.critic, updates)
     new_train_state = train_state.replace(critic=new_critic, critic_opt_state=new_critic_opt_state)
-    # print("critic change:{}", eqx.tree_equal(new_train_state.critic, train_state.critic))
     return new_train_state, loss
-
 
 @eqx.filter_jit
 def _update_actor(train_state, batch, key):
@@ -366,13 +326,10 @@ def _update_actor(train_state, batch, key):
 
     loss, grads = eqx.filter_value_and_grad(actor_loss)(train_state.actor)
     updates, new_actor_opt_state = train_state.actor_opt.update(grads, train_state.actor_opt_state,
-                                                                eqx.filter(train_state.actor, eqx.is_array))
+                                                              eqx.filter(train_state.actor, eqx.is_array))
     new_actor = eqx.apply_updates(train_state.actor, updates)
     new_train_state = train_state.replace(actor=new_actor, actor_opt_state=new_actor_opt_state)
-    # print("actor change:{}", eqx.tree_equal(new_train_state.actor, train_state.actor))
-
     return new_train_state, loss
-
 
 @eqx.filter_jit
 def _update_alpha(train_state, batch, key):
@@ -383,25 +340,19 @@ def _update_alpha(train_state, batch, key):
         next_action, (action_prob, log_action_prob), max_logits_action = eqx.filter_vmap(train_state.actor)(obs, key_array)
         entropy = -jnp.sum(action_prob * log_action_prob, axis=-1)
         alpha = log_alpha()
-        loss = jnp.mean(-alpha * (entropy + config.target_entropy))
-        # loss = jnp.mean(action_prob * ((log_alpha() * -log_action_prob) + config.target_entropy))
+        loss = jnp.mean(-alpha * (entropy + config["target_entropy"]))
         return loss
 
     loss, grads = eqx.filter_value_and_grad(alpha_loss)(train_state.alpha)
     updates, new_alpha_opt_state = train_state.alpha_opt.update(grads, train_state.alpha_opt_state)
     new_alpha = eqx.apply_updates(train_state.alpha, updates)
     new_train_state = train_state.replace(alpha=new_alpha, alpha_opt_state=new_alpha_opt_state)
-    # print("alpha change:{}", eqx.tree_equal(train_state.alpha, new_train_state.alpha))
-
     return new_train_state, loss
 
-
-@eqx.filter_jit
 def train(train_state, config, env, env_params, buffer):
-    key = jax.random.PRNGKey(config.seed)
+    key = jax.random.PRNGKey(config["seed"])
     obs, state = env.reset(key, env_params)
-    for episode in range(config.num_episodes):
-
+    for episode in range(config["num_episodes"]):
         episode_reward = 0
         done = False
         cum_critic_loss = 0
@@ -410,45 +361,35 @@ def train(train_state, config, env, env_params, buffer):
         num_steps = 0
 
         while not done:
-            # 收集经验
             key, action_key, step_key = jax.random.split(key, 3)
-            if buffer.size < config.warmup_steps:
-                action = jax.random.randint(action_key, shape=(), minval=0, maxval=2)  # Random action 0 or 1
 
+            if buffer.size < config["warmup_steps"]:
+                action = jax.random.randint(action_key, shape=(), minval=0, maxval=5)
             else:
                 action, (_, _), _ = train_state.actor(obs, action_key)
 
             next_obs, state, reward, done, _ = env.step(step_key, state, action, env_params)
             buffer = buffer.add(obs, action, reward, next_obs, done)
 
-            # 更新网络
-            if buffer.size >= config.warmup_steps:
-                batch = buffer.sample(batch_size=config.batch_size, key=key)
+            if buffer.size >= config["warmup_steps"]:
+                batch = buffer.sample(batch_size=config["batch_size"], key=key)
                 keys = jax.random.split(key, 3)
                 train_state, critic_loss = _update_critic(train_state, batch, keys[0])
                 train_state, actor_loss = _update_actor(train_state, batch, keys[1])
                 train_state, alpha_loss = _update_alpha(train_state, batch, keys[2])
 
-                # new_target_critic = optax.incremental_update(
-                #     train_state.critic,
-                #     train_state.target_critic,
-                #     config.tau
-                # )
-
                 critic_params, critic_arch = eqx.partition(train_state.critic, eqx.is_array)
                 target_critic_params, target_critic_arch = eqx.partition(train_state.target_critic, eqx.is_array)
 
                 new_target_critic_params = jax.tree.map(
-                    lambda o, t: o * config.tau + t * (1 - config.tau),
+                    lambda o, t: o * config["tau"] + t * (1 - config["tau"]),
                     critic_params,
                     target_critic_params
                 )
 
                 new_target_critic = eqx.combine(new_target_critic_params, target_critic_arch)
-                critic = eqx.combine(critic_params, critic_arch)
 
                 train_state = train_state.replace(target_critic=new_target_critic)
-                # print(eqx.tree_equal(target_critic, train_state.target_critic))
                 cum_critic_loss += critic_loss
                 cum_actor_loss += actor_loss
                 cum_alpha_loss += alpha_loss
@@ -461,24 +402,92 @@ def train(train_state, config, env, env_params, buffer):
         avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
         avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
         avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
+
+        dict = {
+            "episode": episode,
+            "episode_return": episode_reward,
+            "avg_critic_loss": avg_critic_loss,
+            "avg_actor_loss": avg_actor_loss,
+            "avg_alpha_loss": avg_alpha_loss,
+        }
+
+        if buffer.size >= config["warmup_steps"]:
+            wandb.log(dict)
+
         print(f"Episode {episode}, Reward: {episode_reward}, "
               f"Avg Critic Loss: {avg_critic_loss:.4f}, "
               f"Avg Actor Loss: {avg_actor_loss:.4f}, "
               f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
+    return train_state
 
+def evaluate(model, config):
+    seed = jax.random.PRNGKey(10)
+    seed, _rng = jax.random.split(seed)
+    env, env_params = popgym_arcade.make(config["env_name"], obs_size=config["OBS_SIZE"])
+    vmap_reset = lambda n_envs: lambda rng: jax.vmap(env.reset, in_axes=(0, None))(
+        jax.random.split(rng, n_envs), env_params
+    )
+    vmap_step = lambda n_envs: lambda rng, env_state, action: jax.vmap(
+        env.step, in_axes=(0, 0, 0, None)
+    )(jax.random.split(rng, n_envs), env_state, action, env_params)
+
+    obs, state = vmap_reset(2)(_rng)
+
+    wandb.init(project=f'{config["PROJECT"]}')
+    frames = []
+    for i in range(600):
+        rng, rng_act, rng_step, _rng = jax.random.split(_rng, 4)
+        action, (_, _), _ = eqx.filter_vmap(model)(obs)
+        obs, new_state, reward, term, _ = vmap_step(2)(rng_step, state, action)
+        state = new_state
+        frame = np.asarray(obs[0])
+        frame = (frame * 255).astype(np.uint8)
+        frames.append(frame)
+    frames = np.array(frames, dtype=np.uint8)
+    frames = frames.transpose((0, 3, 1, 2))
+    wandb.log({"{}_{}_SEED={}".format(
+        config["alg_name"],
+              config["env_name"],
+              config["seed"]): wandb.Video(frames, fps=2)
+              })
 
 if __name__ == "__main__":
-    config = Config()
-    key = jax.random.PRNGKey(config.seed)
-    actor = Actor(config.action_dim, key)
-    critic = DoubleCritic(config.action_dim, key)
+    wandb.init(
+        entity=config["entity"],
+        project=config["project"],
+        tags=[
+            config["alg_name"].upper(),
+            config["env_name"].upper(),
+            f"jax_{jax.__version__}",
+        ],
+        name=f'{config["alg_name"]}_{config["env_name"]}_{"SEED="}{config["seed"]}',
+        config=config,
+        mode=config["wandb_mode"],
+    )
+
+    wandb.run.log_code(".")
+
+    # schedule = optax.linear_schedule(
+    #     init_value=config["learning_rate"],
+    #     end_value=1e-10,
+    #     transition_steps=20000,
+    # )
+    key = jax.random.PRNGKey(config["seed"])
+    actor = Actor(config["action_dim"], key)
+    critic = DoubleCritic(config["action_dim"], key)
     alpha = Alpha()
-    target_critic = DoubleCritic(config.action_dim, key)
-    actor_opt = optax.adam(config.learning_rate)
+    target_critic = DoubleCritic(config["action_dim"], key)
+    actor_opt = optax.chain(
+        optax.clip_by_global_norm(config["clip_eps"]),
+        optax.adam(learning_rate=config["learning_rate"], eps=1e-5)
+    )
     actor_opt_state = actor_opt.init(eqx.filter(actor, eqx.is_array))
-    critic_opt = optax.adam(config.learning_rate)
+    critic_opt = optax.chain(
+        optax.clip_by_global_norm(config["clip_eps"]),
+        optax.adam(learning_rate=config["learning_rate"], eps=1e-5)
+    )
     critic_opt_state = critic_opt.init(eqx.filter(critic, eqx.is_array))
-    alpha_opt = optax.adam(config.learning_rate)
+    alpha_opt = optax.adam(learning_rate=config["learning_rate"], eps=1e-5)
     alpha_opt_state = alpha_opt.init(eqx.filter(alpha, eqx.is_array))
 
     train_state = TrainState(
@@ -494,6 +503,7 @@ if __name__ == "__main__":
         alpha_opt_state=alpha_opt_state,
     )
 
-    env, env_params = popgym_arcade.make(config.env_name, obs_size=128)
-    buffer = ReplayBuffer(config.buffer_size, config.obs_dim, config.action_dim, key=key)
-    train(train_state, config, env, env_params, buffer)
+    env, env_params = popgym_arcade.make(config["env_name"], obs_size=128)
+    buffer = ReplayBuffer(config["buffer_size"], config["obs_dim"], config["action_dim"], key=key)
+    train_state = train(train_state, config, env, env_params, buffer)
+    evaluate(train_state.actor, config)

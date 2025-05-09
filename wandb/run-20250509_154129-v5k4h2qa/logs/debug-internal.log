@@ -1,0 +1,15 @@
+{"time":"2025-05-09T15:41:29.749998167+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/wandb/run-20250509_154129-v5k4h2qa/logs/debug-core.log"}
+{"time":"2025-05-09T15:41:30.125257293+08:00","level":"INFO","msg":"created new stream","id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:30.12530668+08:00","level":"INFO","msg":"stream: started","id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:30.12539998+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:30.12541509+08:00","level":"INFO","msg":"sender: started","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:30.125490017+08:00","level":"INFO","msg":"handler: started","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:30.547635122+08:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-05-09T15:41:32.957165706+08:00","level":"INFO","msg":"stream: closing","id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:32.957220475+08:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-05-09T15:41:32.957270481+08:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-05-09T15:41:34.6579883+08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-05-09T15:41:34.98683369+08:00","level":"INFO","msg":"handler: closed","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:34.986904491+08:00","level":"INFO","msg":"writer: Close: closed","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:34.986932748+08:00","level":"INFO","msg":"sender: closed","stream_id":"v5k4h2qa"}
+{"time":"2025-05-09T15:41:34.987054589+08:00","level":"INFO","msg":"stream: closed","id":"v5k4h2qa"}

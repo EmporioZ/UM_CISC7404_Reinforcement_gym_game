@@ -274,6 +274,7 @@ def train(train_state, config, env, env_params, buffer):
         avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
         avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
         avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
+
         print(f"Episode {episode}, Reward: {episode_reward}, "
               f"Avg Critic Loss: {avg_critic_loss:.4f}, "
               f"Avg Actor Loss: {avg_actor_loss:.4f}, "
