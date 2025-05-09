@@ -1,0 +1,7 @@
+{"time":"2025-05-09T18:25:48.444019139+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/wandb/run-20250509_182548-hle392sl/logs/debug-core.log"}
+{"time":"2025-05-09T18:25:48.773323287+08:00","level":"INFO","msg":"created new stream","id":"hle392sl"}
+{"time":"2025-05-09T18:25:48.773372806+08:00","level":"INFO","msg":"stream: started","id":"hle392sl"}
+{"time":"2025-05-09T18:25:48.773399211+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"hle392sl"}
+{"time":"2025-05-09T18:25:48.77346843+08:00","level":"INFO","msg":"sender: started","stream_id":"hle392sl"}
+{"time":"2025-05-09T18:25:48.773551095+08:00","level":"INFO","msg":"handler: started","stream_id":"hle392sl"}
+{"time":"2025-05-09T18:25:49.176730943+08:00","level":"INFO","msg":"Starting system monitor"}

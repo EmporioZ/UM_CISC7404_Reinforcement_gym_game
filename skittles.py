@@ -173,7 +173,7 @@ class Skittles(environment.Environment[EnvState, EnvParams]):
         super().__init__()
         self.obs_size = obs_size
         self.max_steps_in_episode = max_steps_in_episode
-        self.reward_scale = (1.0 / max_steps_in_episode)
+        self.reward_scale = 1.0
         self.grid_size = grid_size
         self.partial_obs = partial_obs
         self.enemy_num = enemy_num
@@ -264,7 +264,11 @@ class Skittles(environment.Environment[EnvState, EnvParams]):
         return enemy_row
 
     def get_obs(self, state: EnvState, params=None, key=None) -> chex.Array:
-        return self.render(state)
+
+        obs = state.matrix_state
+        obs = obs.at[self.grid_size - 1, state.x].set(2)
+        return obs
+        # return self.render(state)
         # return state.matrix_state
 
     def is_terminal(self, state: EnvState, params: EnvParams) -> jnp.ndarray:

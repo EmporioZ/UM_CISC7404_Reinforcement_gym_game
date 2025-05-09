@@ -1,0 +1,7 @@
+{"time":"2025-05-09T18:03:12.651767486+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/wandb/run-20250509_180312-m41xenbi/logs/debug-core.log"}
+{"time":"2025-05-09T18:03:13.005084053+08:00","level":"INFO","msg":"created new stream","id":"m41xenbi"}
+{"time":"2025-05-09T18:03:13.005134408+08:00","level":"INFO","msg":"stream: started","id":"m41xenbi"}
+{"time":"2025-05-09T18:03:13.005172786+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"m41xenbi"}
+{"time":"2025-05-09T18:03:13.005233961+08:00","level":"INFO","msg":"handler: started","stream_id":"m41xenbi"}
+{"time":"2025-05-09T18:03:13.005304116+08:00","level":"INFO","msg":"sender: started","stream_id":"m41xenbi"}
+{"time":"2025-05-09T18:03:13.353866738+08:00","level":"INFO","msg":"Starting system monitor"}

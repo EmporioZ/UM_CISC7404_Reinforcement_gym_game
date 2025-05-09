@@ -1,0 +1,28 @@
+Traceback (most recent call last):
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 533, in <module>
+    actor_opt_state=actor_opt.init(actor),
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/transforms/_combining.py", line 64, in init_fn
+    return tuple(fn(params) for fn in init_fns)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/transforms/_combining.py", line 64, in <genexpr>
+    return tuple(fn(params) for fn in init_fns)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/transforms/_combining.py", line 64, in init_fn
+    return tuple(fn(params) for fn in init_fns)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/transforms/_combining.py", line 64, in <genexpr>
+    return tuple(fn(params) for fn in init_fns)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/_src/transform.py", line 278, in init_fn
+    mu = otu.tree_zeros_like(params, dtype=mu_dtype)  # First moment
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/tree_utils/_tree_math.py", line 247, in tree_zeros_like
+    return jax.tree.map(lambda x: jnp.zeros_like(x, dtype=dtype), tree)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/tree.py", line 155, in map
+    return tree_util.tree_map(f, tree, *rest, is_leaf=is_leaf)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/tree_util.py", line 358, in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/tree_util.py", line 358, in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/optax/tree_utils/_tree_math.py", line 247, in <lambda>
+    return jax.tree.map(lambda x: jnp.zeros_like(x, dtype=dtype), tree)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/numpy/array_creation.py", line 247, in zeros_like
+    util.check_arraylike("zeros_like", a)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/numpy/util.py", line 179, in check_arraylike
+    raise TypeError(msg.format(fun_name, type(arg), pos))
+TypeError: zeros_like requires ndarray or scalar arguments, got <class 'jaxlib.xla_extension.PjitFunction'> at position 0.

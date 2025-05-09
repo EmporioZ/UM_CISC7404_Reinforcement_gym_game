@@ -23,10 +23,10 @@ config = {
     "action_dim": 5,  # CartPole action dimension (0 or 1)
 
     # SAC超参数
-    "learning_rate": 1e-4,
+    "learning_rate": 3e-4,
     "clip_eps": 0.2,
     "buffer_size": 10000,
-    "batch_size": 64,
+    "batch_size": 256,
     "gamma": 0.99,
     "tau": 0.005,
     "alpha": 0.1,
@@ -35,10 +35,11 @@ config = {
 
 
     # 训练参数
-    "num_episodes": 1000,
+    "num_episodes": 5000,
     "eval_interval": 10,
-    "warmup_steps": 1000
+    "warmup_steps": 5000
 }
+
 
 class Transition(NamedTuple):
     obs: jnp.ndarray
@@ -96,6 +97,22 @@ class ReplayBuffer(eqx.Module):
         new_size = jnp.minimum(self.size + 1, self.buffer_size)
 
         # Return a new buffer with updated state (functional update)
+        return eqx.tree_at(
+            lambda x: (x.obs, x.actions, x.rewards, x.next_obs, x.dones, x.ptr, x.size),
+            self,
+            (new_obs, new_actions, new_rewards, new_next_obs, new_dones, new_ptr, new_size)
+        )
+
+    def add_batch(self, obs_batch, action_batch, reward_batch, next_obs_batch, done_batch):
+        batch_size = obs_batch.shape[0]
+        indices = (jnp.arange(batch_size) + self.ptr) % self.buffer_size
+        new_obs = self.obs.at[indices].set(obs_batch)
+        new_actions = self.actions.at[indices].set(action_batch)
+        new_rewards = self.rewards.at[indices].set(reward_batch)
+        new_next_obs = self.next_obs.at[indices].set(next_obs_batch)
+        new_dones = self.dones.at[indices].set(done_batch)
+        new_ptr = (self.ptr + batch_size) % self.buffer_size
+        new_size = jnp.minimum(self.size + batch_size, self.buffer_size)
         return eqx.tree_at(
             lambda x: (x.obs, x.actions, x.rewards, x.next_obs, x.dones, x.ptr, x.size),
             self,
@@ -349,10 +366,15 @@ def _update_alpha(train_state, batch, key):
     new_train_state = train_state.replace(alpha=new_alpha, alpha_opt_state=new_alpha_opt_state)
     return new_train_state, loss
 
-def train(train_state, config, env, env_params, buffer):
+def train(train_state, config, env_reset, env_step, env_params, buffer):
+
     key = jax.random.PRNGKey(config["seed"])
-    obs, state = env.reset(key, env_params)
+    # reset_key = jax.random.split(key, config["n_env"])
+    obs, state = env_reset(key, env_params)
+
+
     for episode in range(config["num_episodes"]):
+
         episode_reward = 0
         done = False
         cum_critic_loss = 0
@@ -368,7 +390,8 @@ def train(train_state, config, env, env_params, buffer):
             else:
                 action, (_, _), _ = train_state.actor(obs, action_key)
 
-            next_obs, state, reward, done, _ = env.step(step_key, state, action, env_params)
+            next_obs, state, reward, done, _ = env_step(step_key, state, action, env_params)
+
             buffer = buffer.add(obs, action, reward, next_obs, done)
 
             if buffer.size >= config["warmup_steps"]:
@@ -398,6 +421,7 @@ def train(train_state, config, env, env_params, buffer):
             obs = next_obs
             episode_reward += reward
             key, _ = jax.random.split(key)
+            num_updates +=
 
         avg_critic_loss = cum_critic_loss / num_steps if num_steps > 0 else 0
         avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
@@ -469,9 +493,10 @@ if __name__ == "__main__":
 
     # schedule = optax.linear_schedule(
     #     init_value=config["learning_rate"],
-    #     end_value=1e-10,
-    #     transition_steps=20000,
+    #     end_value=1e-6,
+    #     transition_steps=10000,
     # )
+
     key = jax.random.PRNGKey(config["seed"])
     actor = Actor(config["action_dim"], key)
     critic = DoubleCritic(config["action_dim"], key)
@@ -488,6 +513,7 @@ if __name__ == "__main__":
     )
     critic_opt_state = critic_opt.init(eqx.filter(critic, eqx.is_array))
     alpha_opt = optax.adam(learning_rate=config["learning_rate"], eps=1e-5)
+
     alpha_opt_state = alpha_opt.init(eqx.filter(alpha, eqx.is_array))
 
     train_state = TrainState(
@@ -504,6 +530,8 @@ if __name__ == "__main__":
     )
 
     env, env_params = popgym_arcade.make(config["env_name"], obs_size=128)
+    env_reset = eqx.filter_jit(env.reset)
+    env_step = eqx.filter_jit(env.step)
     buffer = ReplayBuffer(config["buffer_size"], config["obs_dim"], config["action_dim"], key=key)
-    train_state = train(train_state, config, env, env_params, buffer)
+    train_state = train(train_state, config, env_reset, env_step, env_params, buffer)
     evaluate(train_state.actor, config)

@@ -1,0 +1,16 @@
+jax.errors.SimplifiedTraceback: For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 536, in <module>
+    trained_state = train(train_state, config, env_reset, env_step, env_params, buffer)
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 393, in train
+    train_state, critic_loss = update_critic(train_state, batch, update_key)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/equinox/_jit.py", line 209, in __call__
+    return _call(self, False, args, kwargs)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/equinox/_jit.py", line 263, in _call
+    marker, _, _ = out = jit_wrapper._cached(
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 287, in update_critic
+    next_action, (next_probs, next_log_probs) = eqx.filter_vmap(state.actor)(next_obs, key_array)
+ValueError: too many values to unpack (expected 2)

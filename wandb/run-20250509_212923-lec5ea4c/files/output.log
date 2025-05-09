@@ -1,0 +1,24 @@
+jax.errors.SimplifiedTraceback: For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 538, in <module>
+    trained_state = train(train_state, config, env_reset, env_step, env_params, buffer)
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 401, in train
+    train_state, alpha_loss = update_alpha(train_state, batch)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/equinox/_jit.py", line 209, in __call__
+    return _call(self, False, args, kwargs)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/equinox/_jit.py", line 263, in _call
+    marker, _, _ = out = jit_wrapper._cached(
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 330, in update_alpha
+    _, (_, log_probs) = eqx.filter_vmap(state.actor)(obs, None)
+  File "/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/parallel-sac.py", line 163, in __call__
+    action = action_dist.sample(key=key)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/distreqx/distributions/categorical.py", line 98, in sample
+    draws = jax.random.categorical(key=key, logits=self.logits, axis=-1).astype(
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/random.py", line 1556, in categorical
+    key, _ = _check_prng_key("categorical", key)
+  File "/home/gpuadmin/miniconda3/envs/jax_rl/lib/python3.10/site-packages/jax/_src/random.py", line 96, in _check_prng_key
+    raise TypeError(f'unexpected PRNG key type {type(key)}')
+TypeError: unexpected PRNG key type <class 'NoneType'>

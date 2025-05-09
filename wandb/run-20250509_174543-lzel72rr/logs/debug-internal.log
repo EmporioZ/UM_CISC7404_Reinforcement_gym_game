@@ -1,0 +1,7 @@
+{"time":"2025-05-09T17:45:43.40095143+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/wandb/run-20250509_174543-lzel72rr/logs/debug-core.log"}
+{"time":"2025-05-09T17:45:43.746583406+08:00","level":"INFO","msg":"created new stream","id":"lzel72rr"}
+{"time":"2025-05-09T17:45:43.746638871+08:00","level":"INFO","msg":"stream: started","id":"lzel72rr"}
+{"time":"2025-05-09T17:45:43.74676185+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"lzel72rr"}
+{"time":"2025-05-09T17:45:43.746833921+08:00","level":"INFO","msg":"sender: started","stream_id":"lzel72rr"}
+{"time":"2025-05-09T17:45:43.746900075+08:00","level":"INFO","msg":"handler: started","stream_id":"lzel72rr"}
+{"time":"2025-05-09T17:45:44.109818269+08:00","level":"INFO","msg":"Starting system monitor"}

@@ -2,18 +2,19 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 import optax
-import gymnax
+from skittles import SkittlesEasy, SkittlesMedium, SkittlesHard
 from distreqx import distributions
 from typing import Tuple, NamedTuple
 import numpy as np
+import wandb
 from dataclasses import dataclass
 
 @dataclass
 class Config:
     env_name: str = "CartPole-v1"
     seed: int = 42
-    obs_dim: int = 4
-    action_dim: int = 2
+    obs_dim: int = 64
+    action_dim: int = 5
     hidden_dim: int = 256
     learning_rate: float = 3e-4
     buffer_size: int = 10000
@@ -52,10 +53,10 @@ class ReplayBuffer(eqx.Module):
         self.action_dim = action_dim
         self.ptr = jnp.array(0, dtype=jnp.int32)
         self.size = jnp.array(0, dtype=jnp.int32)
-        self.obs = jnp.zeros((buffer_size, obs_dim), dtype=jnp.float32)
+        self.obs = jnp.zeros((buffer_size, obs_dim // 8, obs_dim // 8), dtype=jnp.float32)
         self.actions = jnp.zeros((buffer_size, 1), dtype=jnp.int32)
         self.rewards = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
-        self.next_obs = jnp.zeros((buffer_size, obs_dim), dtype=jnp.float32)
+        self.next_obs = jnp.zeros((buffer_size, obs_dim // 8, obs_dim // 8), dtype=jnp.float32)
         self.dones = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
 
     def add(self, obs, action, reward, next_obs, done):
@@ -101,6 +102,7 @@ class Actor(eqx.Module):
         )
 
     def __call__(self, x, key=None):
+        x = jnp.reshape(x, -1)
         logits = self.trunk(x)
         action_prob = jax.nn.softmax(logits, axis=-1)
         max_logits_action = jnp.argmax(action_prob, axis=-1)
@@ -123,6 +125,7 @@ class DoubleCritic(eqx.Module):
         self.q2 = eqx.nn.MLP(in_size=obs_dim, out_size=action_dim, width_size=hidden_dim, depth=2, key=keys[1])
 
     def __call__(self, obs):
+        obs = jnp.reshape(obs, -1)
         q1 = self.q1(obs)
         q2 = self.q2(obs)
         return q1, q2
@@ -275,13 +278,27 @@ def train(train_state, config, env, env_params, buffer):
         avg_actor_loss = cum_actor_loss / num_steps if num_steps > 0 else 0
         avg_alpha_loss = cum_alpha_loss / num_steps if num_steps > 0 else 0
 
+        wandb.log({
+            "episode": episode,
+            "episode_reward": episode_reward,
+        })
         print(f"Episode {episode}, Reward: {episode_reward}, "
               f"Avg Critic Loss: {avg_critic_loss:.4f}, "
               f"Avg Actor Loss: {avg_actor_loss:.4f}, "
               f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
 
+def evaluate(mode, env):
+    key = jax.random.split(key, 3)
+
 if __name__ == "__main__":
+
     config = Config()
+    wandb.init(
+        entity="",
+        project="sac",
+        name=f'sac_for_{config.seed}',
+        mode="online",
+    )
     key = jax.random.PRNGKey(config.seed)
     actor = Actor(config.obs_dim, config.action_dim, config.hidden_dim, key)
     critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
@@ -307,6 +324,7 @@ if __name__ == "__main__":
         alpha_opt_state=alpha_opt_state,
     )
 
-    env, env_params = gymnax.make(config.env_name)
+    env = SkittlesEasy()
+    # env = SkittlesMedium()
     buffer = ReplayBuffer(config.buffer_size, config.obs_dim, config.action_dim, key=key)
-    train(train_state, config, env, env_params, buffer)
+    train(train_state, config, env, env.default_params, buffer)
