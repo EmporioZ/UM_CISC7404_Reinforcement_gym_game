@@ -12,7 +12,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     seed: int = 42
-    clip_eps: float = 0.5
+    clip_eps: float = 1.0
     obs_dim: int = 8
     action_dim: int = 5
     hidden_dim: int = 256
