@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    env_name: str = "CartPole-v1"
     seed: int = 42
     clip_eps: float = 0.5
     obs_dim: int = 8
