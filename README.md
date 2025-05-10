@@ -1,6 +1,6 @@
 # UM_CISC7404_Reinforcement_gym_game
 
-This repository contains the code and resources for the CISC7404 course project, focusing on reinforcement learning using OpenAI Gym environments.
+This repository contains the code and resources for the CISC7404 course project, focusing on reinforcement learning using Gymnax-style environments.
 
 ## Project Description
 
