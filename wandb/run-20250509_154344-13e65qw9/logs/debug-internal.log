@@ -1,7 +1,0 @@
-{"time":"2025-05-09T15:43:44.627514243+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.10","symlink path":"/home/gpuadmin/UM_CISC7404_Reinforcement_gym_game/wandb/run-20250509_154344-13e65qw9/logs/debug-core.log"}
-{"time":"2025-05-09T15:43:45.029296299+08:00","level":"INFO","msg":"created new stream","id":"13e65qw9"}
-{"time":"2025-05-09T15:43:45.029347951+08:00","level":"INFO","msg":"stream: started","id":"13e65qw9"}
-{"time":"2025-05-09T15:43:45.029509932+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"13e65qw9"}
-{"time":"2025-05-09T15:43:45.029620458+08:00","level":"INFO","msg":"handler: started","stream_id":"13e65qw9"}
-{"time":"2025-05-09T15:43:45.02970784+08:00","level":"INFO","msg":"sender: started","stream_id":"13e65qw9"}
-{"time":"2025-05-09T15:43:45.423137939+08:00","level":"INFO","msg":"Starting system monitor"}
