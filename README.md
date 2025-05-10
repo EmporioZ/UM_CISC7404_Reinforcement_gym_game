@@ -26,8 +26,11 @@ To set up the project, follow these steps:
    ```bash
    pip install -r requirements.txt
    ```
+## Directory
+- skittles.py *Skittles* game
+- sac-discrete-skittles.py *soft actor-critic discrete* implementation for skittles
 
-## Usage
+## Usage 
 
 To train the agent, run the following command:
 ```bash
