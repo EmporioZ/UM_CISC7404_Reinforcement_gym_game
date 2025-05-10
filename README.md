@@ -27,8 +27,8 @@ To set up the project, follow these steps:
    pip install -r requirements.txt
    ```
 ## Directory
-- skittles.py *Skittles* game
-- sac-discrete-skittles.py *soft actor-critic discrete* implementation for skittles
+- `skittles.py` *Skittles* game
+- `sac-discrete-skittles.py` *soft actor-critic discrete* implementation for skittles
 
 ## Usage 
 
