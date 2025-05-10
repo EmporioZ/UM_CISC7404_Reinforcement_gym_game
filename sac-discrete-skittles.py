@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import matplotlib.pyplot as plt
 import optax
-from skittles import SkittlesEasy, SkittlesMedium, SkittlesHard
+from skittles import SkittlesEasy
 from distreqx import distributions
 from typing import Tuple, NamedTuple
 import numpy as np
@@ -14,20 +14,22 @@ from dataclasses import dataclass
 class Config:
     env_name: str = "CartPole-v1"
     seed: int = 42
-    obs_dim: int = 64
+    clip_eps: float = 0.5
+    obs_dim: int = 8
     action_dim: int = 5
     hidden_dim: int = 256
     learning_rate: float = 1e-5
-    buffer_size: int = 100000
+    buffer_size: int = 10000
     batch_size: int = 512
     gamma: float = 0.99
-    tau: float = 0.001
+    tau: float = 0.005
     alpha: float = 0.1
     auto_entropy_tuning: bool = True
     target_entropy: float = -np.log((1 / action_dim)) * 0.98
     num_episodes: int = 5000
     eval_interval: int = 10
     warmup_steps: int = 5000
+    partial_obs: bool = False
 
 class Transition(NamedTuple):
     obs: jnp.ndarray
@@ -54,7 +56,7 @@ class ReplayBuffer(eqx.Module):
         self.action_dim = action_dim
         self.ptr = jnp.array(0, dtype=jnp.int32)
         self.size = jnp.array(0, dtype=jnp.int32)
-        self.obs = jnp.zeros((buffer_size, 8, 8), dtype=jnp.float32)
+        self.obs = jnp.zeros((buffer_size, obs_dim, obs_dim), dtype=jnp.float32)
         self.actions = jnp.zeros((buffer_size, 1), dtype=jnp.int32)
         self.rewards = jnp.zeros((buffer_size, 1), dtype=jnp.float32)
         self.next_obs = jnp.zeros((buffer_size, 8, 8), dtype=jnp.float32)
@@ -164,22 +166,57 @@ class TrainState(State):
     alpha_opt: optax.GradientTransformation
     alpha_opt_state: optax.OptState
 
+    # def calc_target_q(self, states, actions, rewards, next_states, dones):
+    #     with torch.no_grad():
+    #         _, action_probs, log_action_probs = self.policy.sample(next_states)
+    #         next_q1, next_q2 = self.target_critic(next_states)
+    #         next_q = (action_probs * (
+    #                 torch.min(next_q1, next_q2) - self.alpha * log_action_probs
+    #         )).sum(dim=1, keepdim=True)
+    #
+    #     assert rewards.shape == next_q.shape
+    #     return rewards + (1.0 - dones) * self.gamma_n * next_q
+    #
+    # def calc_critic_loss(self, batch, weights):
+    #     curr_q1, curr_q2 = self.calc_current_q(*batch)
+    #     target_q = self.calc_target_q(*batch)
+    #
+    #     # TD errors for updating priority weights
+    #     errors = torch.abs(curr_q1.detach() - target_q)
+    #
+    #     # We log means of Q to monitor training.
+    #     mean_q1 = curr_q1.detach().mean().item()
+    #     mean_q2 = curr_q2.detach().mean().item()
+    #
+    #     # Critic loss is mean squared TD errors with priority weights.
+    #     q1_loss = torch.mean((curr_q1 - target_q).pow(2) * weights)
+    #     q2_loss = torch.mean((curr_q2 - target_q).pow(2) * weights)
+    #
+    #     return q1_loss, q2_loss, errors, mean_q1, mean_q2
 @eqx.filter_jit
 def _update_critic(train_state, batch, key):
     obs, actions, rewards, next_obs, dones = batch
     key_array = jax.random.split(key, obs.shape[0])
     next_actions, (action_prob, log_action_prob), _ = eqx.filter_vmap(train_state.actor)(next_obs, key_array)
     next_target_q1, next_target_q2 = eqx.filter_vmap(train_state.target_critic)(next_obs)
-    min_next_target_q = jnp.sum(action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob), axis=-1, keepdims=True)
+    min_next_target_q = jnp.sum(
+        action_prob * (jnp.minimum(next_target_q1, next_target_q2) - train_state.alpha() * log_action_prob),
+        axis=1,
+        keepdims=True
+    )
+
     target_q = rewards + (1 - dones) * config.gamma * min_next_target_q
     # jax.debug.print("target_q:{}", target_q.shape)
 
     def critic_loss(model):
         q1, q2 = eqx.filter_vmap(model)(obs)
         actions_int = actions.squeeze().astype(jnp.int32)
-        q1_a = q1[jnp.arange(obs.shape[0]), actions_int]
-        q2_a = q2[jnp.arange(obs.shape[0]), actions_int]
-        loss = jnp.mean((q1_a - target_q.squeeze()) ** 2) + jnp.mean((q2_a - target_q.squeeze()) ** 2)
+        mean_q1 = q1.mean()
+        # jax.debug.print("mean_q1:{}", mean_q1.shape)
+        mean_q2 = q2.mean()
+        # q1_a = q1[jnp.arange(obs.shape[0]), actions_int]
+        # q2_a = q2[jnp.arange(obs.shape[0]), actions_int]
+        loss = jnp.mean((mean_q1 - target_q.squeeze()) ** 2) + jnp.mean((mean_q2 - target_q.squeeze()) ** 2)
         return loss
 
     loss, grads = eqx.filter_value_and_grad(critic_loss)(train_state.critic)
@@ -192,14 +229,41 @@ def _update_critic(train_state, batch, key):
 def _update_actor(train_state, batch, key):
     obs, _, _, _, _ = batch
     key_array = jax.random.split(key, obs.shape[0])
+    q1, q2 = eqx.filter_vmap(train_state.critic)(obs)
+    q = jnp.minimum(q1, q2)
+
+    #
+    # def calc_policy_loss(self, batch, weights):
+    #     states, actions, rewards, next_states, dones = batch
+    #
+    #     # (Log of) probabilities to calculate expectations of Q and entropies.
+    #     _, action_probs, log_action_probs = self.policy.sample(states)
+    #
+    #     with torch.no_grad():
+    #         # Q for every actions to calculate expectations of Q.
+    #         q1, q2 = self.online_critic(states)
+    #         q = torch.min(q1, q2)
+    #
+    #     # Expectations of entropies.
+    #     entropies = -torch.sum(
+    #         action_probs * log_action_probs, dim=1, keepdim=True)
+    #
+    #     # Expectations of Q.
+    #     q = torch.sum(torch.min(q1, q2) * action_probs, dim=1, keepdim=True)
+    #
+    #     # Policy objective is maximization of (Q + alpha * entropy) with
+    #     # priority weights.
+    #     policy_loss = (weights * (- q - self.alpha * entropies)).mean()
+    #
+    #     return policy_loss, entropies.detach()
 
     def actor_loss(actor):
         _, (action_prob, log_action_prob), _ = eqx.filter_vmap(actor)(obs, key_array)
-        q1, q2 = eqx.filter_vmap(train_state.critic)(obs)
-        q = jnp.minimum(q1, q2)
-        inside_term = q - train_state.alpha() * log_action_prob
-        loss = -jnp.sum(action_prob * inside_term, axis=-1).mean()
-        return loss
+        entropies = -jnp.sum(action_prob * log_action_prob, axis=1, keepdims=True)
+        q = jnp.sum(jnp.minimum(q1, q2) * action_prob, axis=1, keepdims=True)
+        policy_loss = (-q - train_state.alpha() * entropies).mean()
+        # loss = -jnp.sum(action_prob * inside_term, axis=-1).mean()
+        return policy_loss
 
     loss, grads = eqx.filter_value_and_grad(actor_loss)(train_state.actor)
     updates, new_actor_opt_state = train_state.actor_opt.update(grads, train_state.actor_opt_state, eqx.filter(train_state.actor, eqx.is_array))
@@ -287,12 +351,13 @@ def train(train_state, config, env, env_params, buffer):
               f"Avg Critic Loss: {avg_critic_loss:.4f}, "
               f"Avg Actor Loss: {avg_actor_loss:.4f}, "
               f"Avg Alpha Loss: {avg_alpha_loss:.4f}")
+    return train_state
 
 
 def evaluate(model, config):
     seed = jax.random.PRNGKey(10)
     seed, _rng = jax.random.split(seed)
-    env = SkittlesEasy()
+    env = SkittlesEasy(partial_obs=config.partial_obs)
     env_params = env.default_params
 
     obs, state = env.reset(_rng, env_params)
@@ -325,18 +390,18 @@ if __name__ == "__main__":
     wandb.init(
         entity="",
         project="sac",
-        name=f'sac_for_{config.seed}',
+        name=f'sac_for_{config.seed}_Easy_partial_{config.partial_obs}',
         mode="online",
     )
 
     key = jax.random.PRNGKey(config.seed)
-    actor = Actor(config.obs_dim, config.action_dim, config.hidden_dim, key)
-    critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
+    actor = Actor(config.obs_dim ** 2, config.action_dim, config.hidden_dim, key)
+    critic = DoubleCritic(config.obs_dim ** 2, config.action_dim, config.hidden_dim, key)
     alpha = Alpha()
     target_critic = DoubleCritic(config.obs_dim, config.action_dim, config.hidden_dim, key)
-    actor_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
-    critic_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
-    alpha_opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(config.learning_rate))
+    actor_opt = optax.chain(optax.clip_by_global_norm(config.clip_eps), optax.adam(config.learning_rate))
+    critic_opt = optax.chain(optax.clip_by_global_norm(config.clip_eps), optax.adam(config.learning_rate))
+    alpha_opt = optax.chain(optax.clip_by_global_norm(config.clip_eps), optax.adam(config.learning_rate))
     actor_opt_state = actor_opt.init(eqx.filter(actor, eqx.is_array))
     critic_opt_state = critic_opt.init(eqx.filter(critic, eqx.is_array))
     alpha_opt_state = alpha_opt.init(eqx.filter(alpha, eqx.is_array))
@@ -355,8 +420,8 @@ if __name__ == "__main__":
         alpha_opt_state=alpha_opt_state,
     )
 
-    env = SkittlesEasy()
+    env = SkittlesEasy(partial_obs=config.partial_obs)
     # env = SkittlesMedium()
     buffer = ReplayBuffer(config.buffer_size, config.obs_dim, config.action_dim, key=key)
-    train(train_state, config, env, env.default_params, buffer)
+    train_state = train(train_state, config, env, env.default_params, buffer)
     evaluate(train_state.actor, config)
